@@ -1,0 +1,69 @@
+.session-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.session-tabs.empty {
+  padding: 8px 14px;
+}
+
+.session-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  cursor: pointer;
+  user-select: none;
+  max-width: 180px;
+}
+
+.session-tab-active {
+  border-color: var(--accent);
+  background: var(--row-selected);
+}
+
+.session-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.session-label {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-close {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  padding: 0 4px;
+  font-size: 14px;
+}
+
+.session-close:hover {
+  color: var(--danger);
+}
+
+.session-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: #0a0d12;
+}
+
+.terminal-host {
+  flex: 1;
+  min-height: 0;
+}
