@@ -329,6 +329,13 @@ impl Vault {
     }
 
     pub fn delete(&self, vref: &VaultRef) -> AppResult<()> {
+        // Mutations require the vault to be unlocked. Without this, an
+        // attacker who reaches the IPC surface (e.g. via a renderer
+        // compromise) could destroy ciphertext while the vault is locked,
+        // even though they couldn't read it. The other mutations (`put`,
+        // `get`) gate on this; `delete` must too for the invariant to
+        // hold across the public API.
+        let _unlocked = self.require_unlocked()?;
         let mut inner = self.inner.write();
         let on_disk = inner
             .on_disk
@@ -523,6 +530,22 @@ mod tests {
             assert!(r.is_err(), "case {i} should error");
             assert!(!v.is_unlocked());
         }
+    }
+
+    #[test]
+    fn delete_requires_unlocked() {
+        // Bugbot finding #3: a locked vault must reject mutations even if
+        // the on-disk struct is loaded. Otherwise an IPC-reachable attacker
+        // can destroy ciphertext without authentication.
+        let (_g, vault) = temp_vault();
+        vault.initialize("pw").unwrap();
+        let v = vault.put(SecretKind::Password, b"shh").unwrap();
+        vault.lock();
+        assert!(matches!(vault.delete(&v), Err(AppError::VaultLocked)));
+        // Entry must still be present after the rejected delete.
+        vault.unlock("pw").unwrap();
+        let got = vault.get(&v).expect("entry survives rejected delete");
+        assert_eq!(got.as_slice(), b"shh");
     }
 
     #[test]

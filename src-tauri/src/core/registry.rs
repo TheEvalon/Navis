@@ -588,8 +588,19 @@ impl Registry {
 
     /// Imports a bundle, skipping any rows whose ids already exist locally.
     /// Returns counts so the UI can show "added X folders, Y connections,
-    /// Z credentials". Vault entries are NOT included in exports — credential
-    /// vault_refs from another machine won't resolve, and that's by design.
+    /// Z credentials". Vault entries are NOT included in exports —
+    /// credential `vault_ref`s from another machine won't resolve, and
+    /// that's by design.
+    ///
+    /// Implementation notes:
+    /// - The whole import runs inside one SQLite transaction.
+    /// - `PRAGMA defer_foreign_keys = ON` defers FK checks to commit time,
+    ///   so a folder's `default_credential_id` or `parent_id` referring to
+    ///   another bundle entry inserted later still validates.
+    /// - `INSERT OR IGNORE` makes the import idempotent on primary keys.
+    ///   The summary counts only actual inserts via `rows_affected()`.
+    /// - All reads/writes go through `&mut tx`, never back to `&self.pool`,
+    ///   so this works even on test pools with `max_connections=1`.
     pub async fn import_bundle(&self, bundle: ExportBundle) -> AppResult<ImportSummary> {
         if bundle.version != 1 {
             return Err(AppError::InvalidInput(format!(
@@ -598,37 +609,17 @@ impl Registry {
             )));
         }
         let mut summary = ImportSummary::default();
-        for f in &bundle.folders {
-            let exists = self.get_folder(&f.id).await.ok();
-            if exists.is_some() {
-                continue;
-            }
-            sqlx::query(
-                r#"INSERT INTO folders
-                    (id, parent_id, name, default_credential_id, sort_order, created_at, updated_at)
-                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"#,
-            )
-            .bind(f.id.to_string())
-            .bind(f.parent_id.map(|p| p.to_string()))
-            .bind(&f.name)
-            .bind(f.default_credential_id.map(|c| c.to_string()))
-            .bind(f.sort_order)
-            .bind(f.created_at.to_rfc3339())
-            .bind(f.updated_at.to_rfc3339())
-            .execute(&self.pool)
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("PRAGMA defer_foreign_keys = ON")
+            .execute(&mut *tx)
             .await?;
-            summary.folders_added += 1;
-        }
+
         for cred in &bundle.credentials {
-            let exists = self.get_credential(&cred.id).await.ok();
-            if exists.is_some() {
-                continue;
-            }
             let kind = serde_json::to_string(&cred.kind)?
                 .trim_matches('"')
                 .to_string();
-            sqlx::query(
-                r#"INSERT INTO credential_profiles
+            let res = sqlx::query(
+                r#"INSERT OR IGNORE INTO credential_profiles
                     (id, name, kind, username, vault_ref, created_at, updated_at)
                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"#,
             )
@@ -639,17 +630,36 @@ impl Registry {
             .bind(cred.vault_ref.to_string())
             .bind(cred.created_at.to_rfc3339())
             .bind(cred.updated_at.to_rfc3339())
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
-            summary.credentials_added += 1;
-        }
-        for conn in &bundle.connections {
-            let exists = self.get_connection(&conn.id).await.ok();
-            if exists.is_some() {
-                continue;
+            if res.rows_affected() == 1 {
+                summary.credentials_added += 1;
             }
-            sqlx::query(
-                r#"INSERT INTO connections
+        }
+
+        for f in &bundle.folders {
+            let res = sqlx::query(
+                r#"INSERT OR IGNORE INTO folders
+                    (id, parent_id, name, default_credential_id, sort_order, created_at, updated_at)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"#,
+            )
+            .bind(f.id.to_string())
+            .bind(f.parent_id.map(|p| p.to_string()))
+            .bind(&f.name)
+            .bind(f.default_credential_id.map(|c| c.to_string()))
+            .bind(f.sort_order)
+            .bind(f.created_at.to_rfc3339())
+            .bind(f.updated_at.to_rfc3339())
+            .execute(&mut *tx)
+            .await?;
+            if res.rows_affected() == 1 {
+                summary.folders_added += 1;
+            }
+        }
+
+        for conn in &bundle.connections {
+            let res = sqlx::query(
+                r#"INSERT OR IGNORE INTO connections
                     (id, folder_id, name, protocol, host, port, username, credential_id, options_json, created_at, updated_at)
                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"#,
             )
@@ -664,10 +674,14 @@ impl Registry {
             .bind(serde_json::to_string(&conn.options)?)
             .bind(conn.created_at.to_rfc3339())
             .bind(conn.updated_at.to_rfc3339())
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
-            summary.connections_added += 1;
+            if res.rows_affected() == 1 {
+                summary.connections_added += 1;
+            }
         }
+
+        tx.commit().await?;
         Ok(summary)
     }
 }
@@ -936,6 +950,113 @@ mod tests {
         assert_eq!(connections[0].id, conn.id);
         assert_eq!(connections[0].folder_id, Some(f.id));
         assert_eq!(connections[0].credential_id, Some(cred.id));
+    }
+
+    #[tokio::test]
+    async fn import_with_folder_referencing_credential_in_same_bundle() {
+        // Reproduces Bugbot finding #1: with foreign_keys=ON and folders
+        // inserted before credentials, a folder.default_credential_id
+        // pointing inside the bundle previously failed FK validation.
+        let src = Registry::open_memory().await.unwrap();
+        let cred = src
+            .create_credential(CredentialProfileInput {
+                name: "shared".into(),
+                kind: SecretKind::Password,
+                username: Some("ops".into()),
+                vault_ref: VaultRef::new(),
+            })
+            .await
+            .unwrap();
+        let parent = src
+            .create_folder(FolderInput {
+                parent_id: None,
+                name: "prod".into(),
+                default_credential_id: Some(cred.id),
+                sort_order: None,
+            })
+            .await
+            .unwrap();
+        let child = src
+            .create_folder(FolderInput {
+                parent_id: Some(parent.id),
+                name: "web".into(),
+                default_credential_id: None,
+                sort_order: None,
+            })
+            .await
+            .unwrap();
+        let conn = src
+            .create_connection(ConnectionInput {
+                folder_id: Some(child.id),
+                name: "h".into(),
+                protocol: Protocol::Ssh,
+                host: "h".into(),
+                port: None,
+                username: Some("ops".into()),
+                credential_id: Some(cred.id),
+                options: None,
+            })
+            .await
+            .unwrap();
+        let bundle = src.export_all().await.unwrap();
+
+        let dst = Registry::open_memory().await.unwrap();
+        let summary = dst
+            .import_bundle(bundle)
+            .await
+            .expect("import must succeed");
+        assert_eq!(summary.folders_added, 2);
+        assert_eq!(summary.connections_added, 1);
+        assert_eq!(summary.credentials_added, 1);
+        // Verify the FK graph is intact in the destination.
+        let folders = dst.list_folders().await.unwrap();
+        let imported_parent = folders.iter().find(|f| f.id == parent.id).unwrap();
+        assert_eq!(imported_parent.default_credential_id, Some(cred.id));
+        let imported_conn = dst.get_connection(&conn.id).await.unwrap();
+        assert_eq!(imported_conn.credential_id, Some(cred.id));
+        assert_eq!(imported_conn.folder_id, Some(child.id));
+    }
+
+    #[tokio::test]
+    async fn import_with_unsorted_folder_parents_succeeds() {
+        // The export iterator may return folders in an order where a child
+        // appears before its parent. defer_foreign_keys keeps the import
+        // robust against that.
+        let dst = Registry::open_memory().await.unwrap();
+        let parent_id = FolderId::new();
+        let child_id = FolderId::new();
+        let now = chrono::Utc::now();
+        let bundle = ExportBundle {
+            version: 1,
+            credentials: vec![],
+            // Deliberately put the child first in the list.
+            folders: vec![
+                Folder {
+                    id: child_id,
+                    parent_id: Some(parent_id),
+                    name: "child".into(),
+                    default_credential_id: None,
+                    sort_order: 0,
+                    created_at: now,
+                    updated_at: now,
+                },
+                Folder {
+                    id: parent_id,
+                    parent_id: None,
+                    name: "parent".into(),
+                    default_credential_id: None,
+                    sort_order: 0,
+                    created_at: now,
+                    updated_at: now,
+                },
+            ],
+            connections: vec![],
+        };
+        let summary = dst
+            .import_bundle(bundle)
+            .await
+            .expect("import must succeed");
+        assert_eq!(summary.folders_added, 2);
     }
 
     #[tokio::test]

@@ -75,6 +75,12 @@ pub struct TransferStatus {
 ///
 /// Refuses traversal sequences and embedded NULs. The caller is responsible
 /// for joining with a known-safe base when needed.
+///
+/// Traversal is rejected only when `..` appears as a *standalone path
+/// component* (i.e. between separators or at either end). Filenames such
+/// as `backup..tar.gz` or `archive..2024.zip` are legal and are allowed
+/// through. Both forward and backslash separators are recognized so the
+/// check is consistent on Windows targets.
 pub fn validate_relative_path(p: &str) -> AppResult<()> {
     if p.is_empty() {
         return Err(AppError::InvalidInput("empty path".into()));
@@ -82,7 +88,8 @@ pub fn validate_relative_path(p: &str) -> AppResult<()> {
     if p.bytes().any(|b| b == 0) {
         return Err(AppError::InvalidInput("path contains NUL".into()));
     }
-    if p.contains("..") {
+    let has_traversal_segment = p.split(['/', '\\']).any(|seg| seg == "..");
+    if has_traversal_segment {
         return Err(AppError::InvalidInput("path traversal not allowed".into()));
     }
     Ok(())
@@ -232,8 +239,26 @@ mod tests {
 
     #[test]
     fn relative_path_safety() {
-        assert!(validate_relative_path("a/b").is_ok());
+        // Traversal segments — rejected.
         assert!(validate_relative_path("../etc/passwd").is_err());
+        assert!(validate_relative_path("..").is_err());
+        assert!(validate_relative_path("a/../b").is_err());
+        assert!(validate_relative_path("a/..").is_err());
+        assert!(validate_relative_path("a\\..\\b").is_err());
+
+        // Legitimate paths — allowed.
+        assert!(validate_relative_path("a/b").is_ok());
+        assert!(validate_relative_path("dir/file.txt").is_ok());
+
+        // Filenames that *contain* the bytes ".." but where ".." is not
+        // a standalone path component. These are legal and must pass.
+        assert!(validate_relative_path("backup..tar.gz").is_ok());
+        assert!(validate_relative_path("archive..2024.zip").is_ok());
+        assert!(validate_relative_path("my..folder/inner").is_ok());
+        assert!(validate_relative_path("a/file..with..dots").is_ok());
+        assert!(validate_relative_path("...hidden").is_ok());
+
+        // NUL and empty — rejected.
         assert!(validate_relative_path("a/\0b").is_err());
         assert!(validate_relative_path("").is_err());
     }
