@@ -157,6 +157,7 @@ function ConnectionForm({
   }, [connection.id]);
 
   const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
 
   return (
     <form
@@ -164,6 +165,7 @@ function ConnectionForm({
       onSubmit={async (e) => {
         e.preventDefault();
         setError(null);
+        setInfo(null);
         let optsObj: Record<string, unknown> | null = null;
         if (form.options_json.trim().length) {
           try {
@@ -194,6 +196,7 @@ function ConnectionForm({
     >
       <h2>Connection</h2>
       {error ? <div className="banner error">{error}</div> : null}
+      {info ? <div className="banner">{info}</div> : null}
       <div className="field">
         <label>Name</label>
         <input
@@ -290,8 +293,16 @@ function ConnectionForm({
         <button
           type="button"
           onClick={async () => {
+            setError(null);
+            setInfo(null);
             try {
-              await api.startSession(connection.id);
+              const result = await api.startSession(connection.id);
+              if (result.kind === "external") {
+                const detail = result.credentials_prefilled
+                  ? " with credentials prefilled"
+                  : " (you'll be prompted for credentials)";
+                setInfo(`Launched in ${result.client}${detail}.`);
+              }
             } catch (err) {
               const msg = (err as IpcError).message ?? String(err);
               setError(msg);

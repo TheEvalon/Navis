@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.1.1 — RDP launcher
+
+### Added
+- **RDP via the OS-native client** as the v0.1.x default. Connect on an RDP connection now decrypts the bound credential, prefills the system credential store, and spawns the platform's native RDP client:
+  - Windows: `cmdkey /generic:TERMSRV/<host> /user:<user> /pass:<pwd>` then `mstsc /v:<host>:<port>`. The `cmdkey` entry is removed automatically ~20 s after launch.
+  - Linux: `xfreerdp` (or `xfreerdp3`) with `/v`, `/u`, `/d`, `/size`, `/bpp`, `/cert:tofu`, `+clipboard`.
+  - macOS: writes a transient `.rdp` file in `$TMPDIR` and `open`s it (Microsoft Remote Desktop). Username is prefilled; password prompt remains.
+- `start_session` now returns a tagged `StartedSession`: `{ kind: "in_app", session_id }` for SSH/SFTP, `{ kind: "external", client, credentials_prefilled }` for RDP. The renderer shows "Launched in <client>" instead of treating RDP as an in-app session.
+- Pull request feedback for `Connect` button: success info banner for external launches, error banner for failures.
+
+### Security notes
+- The Windows path passes the password to `cmdkey` via the command line, where it is briefly visible in process listings. The Linux path passes the password to `xfreerdp` via `/p:`, same caveat. The temporary `cmdkey` entry is deleted within 20 s. The embedded `ironrdp` client (deferred to v0.2) uses an in-memory credential path that avoids both.
+- macOS does not prefill the password; users authenticate inside Microsoft Remote Desktop on first connect.
+
+### Internal
+- `protocols::rdp::launch_external` + `ExternalLaunch` / `ExternalLaunched` types form the new public surface.
+- New build dep `which` (Linux-only target dep).
+
 ## v0.1.0 — initial release (foundational)
 
 ### Added

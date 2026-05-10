@@ -10,13 +10,20 @@ use crate::core::ids::{ConnectionId, SessionId};
 use crate::core::policy;
 use crate::core::registry::Protocol;
 use crate::core::state::AppState;
+use crate::protocols::rdp::ExternalLaunched;
 use crate::protocols::session::{
     SessionEvent, SessionInfo, SessionInput, SessionKind, SessionState,
 };
 
+/// Result of `start_session`. SSH/SFTP go through the in-app path and
+/// return a `SessionId` the renderer can attach to. RDP currently spawns
+/// the OS-native client and returns its identity instead, so the renderer
+/// shows "launched in <client>" rather than trying to render frames.
 #[derive(Debug, Clone, Serialize)]
-pub struct StartedSession {
-    pub session_id: SessionId,
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum StartedSession {
+    InApp { session_id: SessionId },
+    External(ExternalLaunched),
 }
 
 /// Starts an SSH/SFTP/RDP session for an existing connection.
@@ -71,11 +78,23 @@ pub async fn start_session(
             }
         }
         Protocol::Rdp => {
-            // The full ironrdp wiring is large enough to land on its own.
-            // We return a structured error so the UI shows it cleanly.
-            return Err(AppError::Protocol(
-                "RDP session bring-up lands in a dedicated follow-up commit; the trust-store, options, and IPC surface are already in place".into(),
-            ));
+            let opts: crate::protocols::rdp::RdpOptions =
+                serde_json::from_value(conn.options.clone()).unwrap_or_default();
+            let user = conn
+                .username
+                .clone()
+                .ok_or_else(|| AppError::InvalidInput("RDP connection has no username".into()))?;
+            let password = build_rdp_password(&state, resolved).await?;
+            let launched =
+                crate::protocols::rdp::launch_external(crate::protocols::rdp::ExternalLaunch {
+                    host: &conn.host,
+                    port: conn.port,
+                    user: &user,
+                    domain: opts.domain.as_deref(),
+                    password,
+                    options: &opts,
+                })?;
+            return Ok(StartedSession::External(launched));
         }
     };
 
@@ -87,7 +106,27 @@ pub async fn start_session(
     };
     let _ = info; // for clarity
     state.sessions.write().insert(session_id, handle);
-    Ok(StartedSession { session_id })
+    Ok(StartedSession::InApp { session_id })
+}
+
+async fn build_rdp_password(
+    state: &AppState,
+    cred: Option<crate::core::ids::CredentialId>,
+) -> AppResult<Option<zeroize::Zeroizing<Vec<u8>>>> {
+    let Some(cred_id) = cred else {
+        // No credential bound; the external client will prompt.
+        return Ok(None);
+    };
+    let profile = state.registry.get_credential(&cred_id).await?;
+    match profile.kind {
+        crate::core::vault::SecretKind::RdpPassword | crate::core::vault::SecretKind::Password => {
+            let bytes = state.vault.get(&profile.vault_ref)?;
+            Ok(Some(zeroize::Zeroizing::new(bytes.as_slice().to_vec())))
+        }
+        other => Err(AppError::InvalidInput(format!(
+            "credential kind {other:?} not usable for RDP"
+        ))),
+    }
 }
 
 async fn build_ssh_auth(

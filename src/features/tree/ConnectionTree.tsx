@@ -156,9 +156,16 @@ function Node({ node, style, dragHandle }: NodeRendererProps<TreeNode>) {
       onDoubleClick={async () => {
         if (!isFolder) {
           try {
-            await api.startSession(node.data.id);
+            const result = await api.startSession(node.data.id);
+            if (result.kind === "external") {
+              const detail = result.credentials_prefilled
+                ? " with credentials prefilled"
+                : " (you'll be prompted for credentials)";
+              window.alert(`Launched in ${result.client}${detail}.`);
+            }
           } catch (err) {
-            console.warn("start session failed:", err);
+            const msg = (err as Error).message ?? String(err);
+            window.alert(`Failed to start session: ${msg}`);
           }
         }
       }}

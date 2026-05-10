@@ -47,6 +47,9 @@ once_cell = { workspace = true }
 parking_lot = { workspace = true }
 directories = { workspace = true }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+which = { workspace = true }
+
 # Phase 3+ (kept here so the lib compiles with the modules referenced)
 russh = { workspace = true }
 russh-keys = { workspace = true }

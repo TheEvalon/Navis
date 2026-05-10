@@ -118,9 +118,9 @@ export interface SessionListItem {
   state: SessionState;
 }
 
-export interface StartedSession {
-  session_id: SessionId;
-}
+export type StartedSession =
+  | { kind: "in_app"; session_id: SessionId }
+  | { kind: "external"; client: string; credentials_prefilled: boolean };
 
 export type SessionEvent =
   | { type: "output"; session_id: SessionId; data: number[] }
