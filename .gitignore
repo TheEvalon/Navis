@@ -28,6 +28,8 @@ dist-ssr
 src-tauri/target
 src-tauri/gen
 target/
+tsconfig.tsbuildinfo
+*.tsbuildinfo
 
 # Local env / secrets
 .env
