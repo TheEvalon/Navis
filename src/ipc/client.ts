@@ -65,7 +65,11 @@ export const api = {
     invoke<CredentialId | null>("resolve_credential", { connectionId }),
 
   exportBundle: () => invoke<ExportBundle>("export_bundle"),
-  importBundle: (bundle: ExportBundle) => invoke<void>("import_bundle", { bundle }),
+  importBundle: (bundle: ExportBundle) =>
+    invoke<{ folders_added: number; connections_added: number; credentials_added: number }>(
+      "import_bundle",
+      { bundle },
+    ),
 
   // ---- Vault
   vaultStatus: () => invoke<VaultStatus>("vault_status"),
@@ -75,6 +79,10 @@ export const api = {
   vaultPutSecret: (input: PutSecretInput) => invoke<VaultRef>("vault_put_secret", { input }),
   vaultDeleteSecret: (vaultRef: VaultRef) => invoke<void>("vault_delete_secret", { vaultRef }),
   vaultListEntries: () => invoke<VaultEntrySummary[]>("vault_list_entries"),
+
+  autolockTouch: () => invoke<void>("autolock_touch"),
+  autolockGet: () => invoke<{ idle_secs: number }>("autolock_get"),
+  autolockSet: (idleSecs: number) => invoke<{ idle_secs: number }>("autolock_set", { idleSecs }),
 
   // ---- Sessions
   startSession: (connectionId: ConnectionId) =>

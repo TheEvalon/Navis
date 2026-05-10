@@ -78,6 +78,13 @@ export function ConnectionTree() {
         >
           + Connection
         </button>
+        <span style={{ flex: 1 }} />
+        <button title="Export bundle" onClick={() => void onExport()}>
+          ↗ Export
+        </button>
+        <button title="Import bundle" onClick={() => void onImport(refresh)}>
+          ↙ Import
+        </button>
       </div>
       <div className="tree-search">
         <input placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -178,6 +185,41 @@ function protocolIcon(protocol?: Protocol): string {
     default:
       return "•";
   }
+}
+
+async function onExport() {
+  const bundle = await api.exportBundle();
+  const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `navis-export-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function onImport(refresh: () => Promise<void>) {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "application/json,.json";
+  input.onchange = async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const bundle = JSON.parse(text);
+      const summary = await api.importBundle(bundle);
+      window.alert(
+        `Imported: ${summary.folders_added} folders, ${summary.connections_added} connections, ${summary.credentials_added} credentials.`,
+      );
+      await refresh();
+    } catch (err) {
+      window.alert(`Import failed: ${(err as Error).message}`);
+    }
+  };
+  input.click();
 }
 
 async function onNewFolder(refresh: () => Promise<void>) {

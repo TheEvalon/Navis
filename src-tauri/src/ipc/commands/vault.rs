@@ -68,3 +68,27 @@ pub fn vault_delete_secret(state: State<'_, AppState>, vault_ref: VaultRef) -> A
 pub fn vault_list_entries(state: State<'_, AppState>) -> AppResult<Vec<EntrySummary>> {
     state.vault.list()
 }
+
+/// Renderer-driven heartbeat for the idle-lock timer.
+#[tauri::command]
+pub fn autolock_touch(state: State<'_, AppState>) {
+    state.autolock.touch();
+}
+
+#[derive(Debug, Serialize)]
+pub struct AutolockSettings {
+    pub idle_secs: u64,
+}
+
+#[tauri::command]
+pub fn autolock_get(state: State<'_, AppState>) -> AutolockSettings {
+    AutolockSettings {
+        idle_secs: state.autolock.idle_secs(),
+    }
+}
+
+#[tauri::command]
+pub fn autolock_set(state: State<'_, AppState>, idle_secs: u64) -> AppResult<AutolockSettings> {
+    state.autolock.set_idle_secs(idle_secs);
+    Ok(AutolockSettings { idle_secs })
+}

@@ -585,6 +585,98 @@ impl Registry {
             credentials,
         })
     }
+
+    /// Imports a bundle, skipping any rows whose ids already exist locally.
+    /// Returns counts so the UI can show "added X folders, Y connections,
+    /// Z credentials". Vault entries are NOT included in exports — credential
+    /// vault_refs from another machine won't resolve, and that's by design.
+    pub async fn import_bundle(&self, bundle: ExportBundle) -> AppResult<ImportSummary> {
+        if bundle.version != 1 {
+            return Err(AppError::InvalidInput(format!(
+                "unsupported bundle version {}",
+                bundle.version
+            )));
+        }
+        let mut summary = ImportSummary::default();
+        for f in &bundle.folders {
+            let exists = self.get_folder(&f.id).await.ok();
+            if exists.is_some() {
+                continue;
+            }
+            sqlx::query(
+                r#"INSERT INTO folders
+                    (id, parent_id, name, default_credential_id, sort_order, created_at, updated_at)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"#,
+            )
+            .bind(f.id.to_string())
+            .bind(f.parent_id.map(|p| p.to_string()))
+            .bind(&f.name)
+            .bind(f.default_credential_id.map(|c| c.to_string()))
+            .bind(f.sort_order)
+            .bind(f.created_at.to_rfc3339())
+            .bind(f.updated_at.to_rfc3339())
+            .execute(&self.pool)
+            .await?;
+            summary.folders_added += 1;
+        }
+        for cred in &bundle.credentials {
+            let exists = self.get_credential(&cred.id).await.ok();
+            if exists.is_some() {
+                continue;
+            }
+            let kind = serde_json::to_string(&cred.kind)?
+                .trim_matches('"')
+                .to_string();
+            sqlx::query(
+                r#"INSERT INTO credential_profiles
+                    (id, name, kind, username, vault_ref, created_at, updated_at)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"#,
+            )
+            .bind(cred.id.to_string())
+            .bind(&cred.name)
+            .bind(&kind)
+            .bind(&cred.username)
+            .bind(cred.vault_ref.to_string())
+            .bind(cred.created_at.to_rfc3339())
+            .bind(cred.updated_at.to_rfc3339())
+            .execute(&self.pool)
+            .await?;
+            summary.credentials_added += 1;
+        }
+        for conn in &bundle.connections {
+            let exists = self.get_connection(&conn.id).await.ok();
+            if exists.is_some() {
+                continue;
+            }
+            sqlx::query(
+                r#"INSERT INTO connections
+                    (id, folder_id, name, protocol, host, port, username, credential_id, options_json, created_at, updated_at)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"#,
+            )
+            .bind(conn.id.to_string())
+            .bind(conn.folder_id.map(|f| f.to_string()))
+            .bind(&conn.name)
+            .bind(conn.protocol.as_str())
+            .bind(&conn.host)
+            .bind(conn.port as i64)
+            .bind(&conn.username)
+            .bind(conn.credential_id.map(|c| c.to_string()))
+            .bind(serde_json::to_string(&conn.options)?)
+            .bind(conn.created_at.to_rfc3339())
+            .bind(conn.updated_at.to_rfc3339())
+            .execute(&self.pool)
+            .await?;
+            summary.connections_added += 1;
+        }
+        Ok(summary)
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ImportSummary {
+    pub folders_added: usize,
+    pub connections_added: usize,
+    pub credentials_added: usize,
 }
 
 fn validate_name(name: &str) -> AppResult<()> {
@@ -782,6 +874,81 @@ mod tests {
                 options: None,
             })
             .await,
+            Err(AppError::InvalidInput(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn export_import_roundtrip() {
+        let src = Registry::open_memory().await.unwrap();
+        let f = src
+            .create_folder(FolderInput {
+                parent_id: None,
+                name: "Prod".into(),
+                default_credential_id: None,
+                sort_order: None,
+            })
+            .await
+            .unwrap();
+        let cred = src
+            .create_credential(CredentialProfileInput {
+                name: "shared".into(),
+                kind: SecretKind::Password,
+                username: Some("ops".into()),
+                vault_ref: VaultRef::new(),
+            })
+            .await
+            .unwrap();
+        let conn = src
+            .create_connection(ConnectionInput {
+                folder_id: Some(f.id),
+                name: "host".into(),
+                protocol: Protocol::Ssh,
+                host: "h".into(),
+                port: None,
+                username: Some("ops".into()),
+                credential_id: Some(cred.id),
+                options: None,
+            })
+            .await
+            .unwrap();
+
+        let bundle = src.export_all().await.unwrap();
+        let dst = Registry::open_memory().await.unwrap();
+        let summary = dst.import_bundle(bundle.clone()).await.unwrap();
+        assert_eq!(summary.folders_added, 1);
+        assert_eq!(summary.connections_added, 1);
+        assert_eq!(summary.credentials_added, 1);
+
+        // Idempotent: re-import skips everything.
+        let again = dst.import_bundle(bundle).await.unwrap();
+        assert_eq!(again.folders_added, 0);
+        assert_eq!(again.connections_added, 0);
+        assert_eq!(again.credentials_added, 0);
+
+        // Verify shape preserved.
+        let folders = dst.list_folders().await.unwrap();
+        let connections = dst.list_connections().await.unwrap();
+        let credentials = dst.list_credentials().await.unwrap();
+        assert_eq!(folders.len(), 1);
+        assert_eq!(connections.len(), 1);
+        assert_eq!(credentials.len(), 1);
+        assert_eq!(connections[0].id, conn.id);
+        assert_eq!(connections[0].folder_id, Some(f.id));
+        assert_eq!(connections[0].credential_id, Some(cred.id));
+    }
+
+    #[tokio::test]
+    async fn import_rejects_bad_version() {
+        let r = Registry::open_memory().await.unwrap();
+        let bundle = ExportBundle {
+            version: 999,
+            folders: vec![],
+            connections: vec![],
+            credentials: vec![],
+        };
+        assert!(matches!(
+            r.import_bundle(bundle).await,
             Err(AppError::InvalidInput(_))
         ));
     }

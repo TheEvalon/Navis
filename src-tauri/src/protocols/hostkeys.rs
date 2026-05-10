@@ -252,6 +252,31 @@ mod tests {
     }
 
     #[test]
+    fn ssh_known_hosts_parser_rejects_garbage() {
+        let g = TempDir::new().unwrap();
+        let kh_path = g.path().join("known_hosts");
+        std::fs::write(
+            &kh_path,
+            b"# comment\n\nincomplete-line\nhost-without-port ssh-rsa key=\nbad:port_str algo k\n",
+        )
+        .unwrap();
+        let kh = SshKnownHosts::new(kh_path);
+        assert!(kh.list().is_err());
+    }
+
+    #[test]
+    fn rdp_pin_store_handles_corrupt_file() {
+        let g = TempDir::new().unwrap();
+        let p = g.path().join("rdp_pins.json");
+        std::fs::write(&p, b"this is not json").unwrap();
+        // load() falls back to empty; we explicitly accept this rather than
+        // surfacing an error, so legitimate users aren't locked out by a
+        // corrupted store.
+        let store = RdpPinStore::load(&p).unwrap();
+        assert_eq!(store.pins.len(), 0);
+    }
+
+    #[test]
     fn rdp_pin_then_check() {
         let g = TempDir::new().unwrap();
         let p = g.path().join("rdp_pins.json");

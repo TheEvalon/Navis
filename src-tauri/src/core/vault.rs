@@ -499,4 +499,49 @@ mod tests {
             Err(AppError::VaultAlreadyInitialized)
         ));
     }
+
+    /// A small property-style harness: write malformed bytes to the vault
+    /// path and confirm we never panic and never claim a successful unlock.
+    #[test]
+    fn malformed_inputs_never_panic() {
+        let cases: &[&[u8]] = &[
+            b"",
+            b"{}",
+            b"not json at all",
+            b"{\"magic\": \"navis-vault-v1\"}",
+            b"{\"magic\":\"navis-vault-v1\",\"version\":1,\"kdf\":{\"algorithm\":\"argon2id\",\"m_cost_kib\":1,\"t_cost\":1,\"parallelism\":1},\"salt_b64\":\"\",\"wrapped_dek_b64\":\"\",\"dek_nonce_b64\":\"\",\"entries\":{}}",
+            b"\xFF\xFE\xFD\xFC",
+            &[0u8; 4096],
+        ];
+        for (i, bytes) in cases.iter().enumerate() {
+            let dir = TempDir::new().unwrap();
+            let path = dir.path().join("vault.bin");
+            std::fs::write(&path, bytes).unwrap();
+            let v = Vault::new(path);
+            // Either errors cleanly or returns BadMasterPassword/Crypto.
+            let r = v.unlock("any");
+            assert!(r.is_err(), "case {i} should error");
+            assert!(!v.is_unlocked());
+        }
+    }
+
+    #[test]
+    fn truncated_ciphertext_fails_aead() {
+        let (_g, vault) = temp_vault();
+        vault.initialize("pw").unwrap();
+        let v = vault.put(SecretKind::Password, b"sensitive").unwrap();
+
+        // Truncate the ciphertext on disk and confirm decryption fails.
+        let raw = std::fs::read(vault.path()).unwrap();
+        let mut on_disk: OnDiskVault = serde_json::from_slice(&raw).unwrap();
+        let entry = on_disk.entries.get_mut(&v.to_string()).unwrap();
+        let mut bytes = unb64(&entry.ciphertext_b64).unwrap();
+        bytes.pop();
+        entry.ciphertext_b64 = b64(&bytes);
+        std::fs::write(vault.path(), serde_json::to_vec(&on_disk).unwrap()).unwrap();
+
+        let v2 = Vault::new(vault.path().to_path_buf());
+        v2.unlock("pw").unwrap();
+        assert!(matches!(v2.get(&v), Err(AppError::Crypto(_))));
+    }
 }

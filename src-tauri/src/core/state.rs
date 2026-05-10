@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 
+use crate::core::autolock::AutoLocker;
 use crate::core::ids::SessionId;
 use crate::core::keychain::SystemKeychain;
 use crate::core::paths::AppPaths;
@@ -18,5 +19,6 @@ pub struct AppState {
     pub vault: Arc<Vault>,
     pub keychain: Arc<SystemKeychain>,
     pub paths: Arc<AppPaths>,
+    pub autolock: AutoLocker,
     pub sessions: Arc<RwLock<HashMap<SessionId, SessionHandle>>>,
 }

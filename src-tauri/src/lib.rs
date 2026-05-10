@@ -19,7 +19,8 @@ use tauri::Manager;
 use tracing::info;
 
 use crate::core::{
-    keychain::SystemKeychain, paths::AppPaths, registry::Registry, state::AppState, vault::Vault,
+    autolock::AutoLocker, keychain::SystemKeychain, paths::AppPaths, registry::Registry,
+    state::AppState, vault::Vault,
 };
 
 /// Entry point for the Tauri application.
@@ -36,14 +37,17 @@ pub fn run() {
             let registry =
                 runtime.block_on(async { Registry::open(&paths.database_path()).await })?;
 
-            let vault = Vault::new(paths.vault_path());
+            let vault = Arc::new(Vault::new(paths.vault_path()));
             let keychain = SystemKeychain::new("com.navis.app", "default-vault");
+            let autolock = AutoLocker::new(vault.clone());
+            autolock.spawn_task();
 
             let state = AppState {
                 registry: Arc::new(registry),
-                vault: Arc::new(vault),
+                vault,
                 keychain: Arc::new(keychain),
                 paths: Arc::new(paths),
+                autolock,
                 sessions: Default::default(),
             };
             app.manage(state);

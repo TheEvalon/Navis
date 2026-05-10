@@ -22,6 +22,10 @@ Navis stores sensitive material — connection metadata, credentials, host keys 
 
 The DEK lives only in memory while the vault is unlocked. It is held in a `Zeroizing<[u8; 32]>` and dropped on `vault_lock`, on app exit, and on idle auto-lock.
 
+### Idle auto-lock
+
+The backend runs an `AutoLocker` that ticks every 15 seconds and locks the vault if no renderer activity has been seen for `idle_secs` (default: 900s = 15 min). The renderer touches the locker on every keystroke, pointer move, focus change, and on a 30-second backstop interval; users actively driving the app never trip the timer. Setting `idle_secs = 0` disables auto-lock (not recommended).
+
 The AAD on entries binds `vault_ref` and `kind` to the ciphertext, so an attacker who can swap entries on disk cannot reinterpret a stored RDP password as, say, a recovery code.
 
 ## Authentication options
