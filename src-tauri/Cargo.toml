@@ -1,0 +1,63 @@
+[package]
+name = "navis"
+description = "Navis — cross-platform connection manager"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+name = "navis_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+
+# From workspace
+tokio = { workspace = true }
+futures = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_bytes = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+aes-gcm = { workspace = true }
+argon2 = { workspace = true }
+rand = { workspace = true }
+zeroize = { workspace = true }
+subtle = { workspace = true }
+sha2 = { workspace = true }
+hkdf = { workspace = true }
+hex = { workspace = true }
+base64 = { workspace = true }
+sqlx = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+keyring = { workspace = true }
+once_cell = { workspace = true }
+parking_lot = { workspace = true }
+directories = { workspace = true }
+
+# Phase 3+ (kept here so the lib compiles with the modules referenced)
+russh = { workspace = true }
+russh-keys = { workspace = true }
+russh-sftp = { workspace = true }
+
+[features]
+default = []
+custom-protocol = ["tauri/custom-protocol"]
+
+[dev-dependencies]
+tempfile = "3.10"
+
+[lints.rust]
+unsafe_code = "forbid"

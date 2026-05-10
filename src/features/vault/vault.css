@@ -1,0 +1,49 @@
+.vault-gate {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vault-pill {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+
+.vault-pill.unlocked {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.vault-pill.locked {
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 20px 22px;
+  width: 420px;
+  max-width: 95vw;
+}
+
+.modal h3 {
+  margin: 0 0 8px 0;
+  font-size: 15px;
+}
