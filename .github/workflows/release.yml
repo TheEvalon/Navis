@@ -5,6 +5,13 @@ on:
     tags:
       - "v*"
 
+# `tauri-action` calls the Releases API with the workflow's GITHUB_TOKEN.
+# The default token is read-only on `contents`, so creating the draft
+# release fails with "Resource not accessible by integration" without
+# this explicit grant.
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
