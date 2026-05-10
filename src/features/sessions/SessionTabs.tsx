@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useAppStore } from "../../store/app";
 import type { SessionEvent, SessionListItem } from "../../ipc/types";
 import { TerminalView } from "./TerminalView";
+import { SftpBrowser } from "./SftpBrowser";
 import { api } from "../../ipc/client";
 import "./sessions.css";
 
@@ -65,9 +66,12 @@ export function SessionTabs() {
         {current ? (
           current.kind === "ssh" ? (
             <TerminalView sessionId={current.id} />
+          ) : current.kind === "sftp" ? (
+            <SftpBrowser sessionId={current.id} />
           ) : (
             <div className="empty-state">
-              {current.kind.toUpperCase()} viewer is implemented in a later phase.
+              The RDP renderer is wired up in a follow-up commit. The trust store and connection
+              editor for RDP are already functional.
             </div>
           )
         ) : null}

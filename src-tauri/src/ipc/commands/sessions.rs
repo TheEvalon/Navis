@@ -46,7 +46,7 @@ pub async fn start_session(
     });
 
     let handle = match conn.protocol {
-        Protocol::Ssh => {
+        Protocol::Ssh | Protocol::Sftp => {
             let auth = build_ssh_auth(&state, resolved).await?;
             let known = std::sync::Arc::new(crate::protocols::hostkeys::SshKnownHosts::new(
                 state.paths.known_hosts_path(),
@@ -64,21 +64,17 @@ pub async fn start_session(
                     .ok_or_else(|| AppError::InvalidInput("connection has no username".into()))?,
                 options: opts,
             };
-            crate::protocols::ssh::connect(params, auth, known, event_tx.clone()).await?
-        }
-        Protocol::Sftp => {
-            // SFTP shares the SSH stack but doesn't open a PTY. We register a
-            // session shell first; the file-browser commands then operate on it.
-            return Err(AppError::Protocol(
-                "SFTP session bring-up is implemented in Phase 4".into(),
-            ));
+            if matches!(conn.protocol, Protocol::Ssh) {
+                crate::protocols::ssh::connect(params, auth, known, event_tx.clone()).await?
+            } else {
+                crate::protocols::ssh::connect_sftp(params, auth, known, event_tx.clone()).await?
+            }
         }
         Protocol::Rdp => {
-            // The full RDP renderer is wired up in Phase 5. We return a
-            // structured error so the UI can show "coming soon" messaging
-            // without crashing.
+            // The full ironrdp wiring is large enough to land on its own.
+            // We return a structured error so the UI shows it cleanly.
             return Err(AppError::Protocol(
-                "RDP session bring-up is implemented in Phase 5".into(),
+                "RDP session bring-up lands in a dedicated follow-up commit; the trust-store, options, and IPC surface are already in place".into(),
             ));
         }
     };

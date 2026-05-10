@@ -87,15 +87,27 @@ pub enum SessionInput {
 pub struct SessionHandle {
     pub info: SessionInfo,
     pub input_tx: Option<mpsc::Sender<SessionInput>>,
+    pub sftp: Option<crate::protocols::sftp::SftpEngine>,
     pub state: Arc<Mutex<SessionState>>,
 }
 
 impl SessionHandle {
-    pub fn new(info: SessionInfo, input_tx: Option<mpsc::Sender<SessionInput>>) -> Self {
+    pub fn new_shell(info: SessionInfo, input_tx: mpsc::Sender<SessionInput>) -> Self {
         let initial = info.state;
         Self {
             info,
-            input_tx,
+            input_tx: Some(input_tx),
+            sftp: None,
+            state: Arc::new(Mutex::new(initial)),
+        }
+    }
+
+    pub fn new_sftp(info: SessionInfo, sftp: crate::protocols::sftp::SftpEngine) -> Self {
+        let initial = info.state;
+        Self {
+            info,
+            input_tx: None,
+            sftp: Some(sftp),
             state: Arc::new(Mutex::new(initial)),
         }
     }

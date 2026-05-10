@@ -121,6 +121,36 @@ impl Handler for ClientHandler {
     }
 }
 
+async fn establish(
+    host: &str,
+    port: u16,
+    user: &str,
+    auth: SshAuth,
+    known_hosts: Arc<SshKnownHosts>,
+) -> AppResult<Handle<ClientHandler>> {
+    let config = Arc::new(client::Config {
+        inactivity_timeout: Some(Duration::from_secs(60)),
+        ..Default::default()
+    });
+
+    let seen = HostKeyChannel::default();
+    let handler = ClientHandler {
+        host: host.into(),
+        port,
+        known: known_hosts.clone(),
+        seen,
+    };
+
+    let addr = (host, port);
+    let mut session = client::connect(config, addr, handler)
+        .await
+        .map_err(|e| AppError::Protocol(format!("ssh connect: {e}")))?;
+
+    authenticate(&mut session, user, auth).await?;
+    info!("ssh authenticated as {user}@{host}:{port}");
+    Ok(session)
+}
+
 /// Establishes an SSH session, opens an interactive PTY shell, and starts
 /// the bidirectional bridge. Returns a `SessionHandle` ready to be inserted
 /// into `AppState::sessions`. Outbound terminal data is delivered as
@@ -145,26 +175,7 @@ pub async fn connect(
         })
         .await;
 
-    let config = Arc::new(client::Config {
-        inactivity_timeout: Some(Duration::from_secs(60)),
-        ..Default::default()
-    });
-
-    let seen = HostKeyChannel::default();
-    let handler = ClientHandler {
-        host: params.host.clone(),
-        port: params.port,
-        known: known_hosts.clone(),
-        seen: seen.clone(),
-    };
-
-    let addr = (params.host.as_str(), params.port);
-    let mut session = client::connect(config.clone(), addr, handler)
-        .await
-        .map_err(|e| AppError::Protocol(format!("ssh connect: {e}")))?;
-
-    authenticate(&mut session, &params.user, auth).await?;
-    info!("ssh authenticated as {}", params.user);
+    let session = establish(&params.host, params.port, &params.user, auth, known_hosts).await?;
 
     let mut channel = session
         .channel_open_session()
@@ -188,12 +199,12 @@ pub async fn connect(
         .map_err(|e| AppError::Protocol(format!("request shell: {e}")))?;
 
     let (input_tx, mut input_rx) = mpsc::channel::<SessionInput>(64);
-    let handle = SessionHandle::new(
+    let handle = SessionHandle::new_shell(
         SessionInfo {
             state: SessionState::Connected,
             ..info
         },
-        Some(input_tx),
+        input_tx,
     );
     let _ = event_tx
         .send(SessionEvent::State {
@@ -263,7 +274,66 @@ pub async fn connect(
         }
     });
 
-    let _ = seen; // keep alive via clone above
+    Ok(handle)
+}
+
+/// Establishes an SSH session, requests the SFTP subsystem on a fresh
+/// channel, and wraps it in an [`SftpEngine`]. Host-key verification and
+/// authentication share code with [`connect`].
+pub async fn connect_sftp(
+    params: SshConnectParams,
+    auth: SshAuth,
+    known_hosts: Arc<SshKnownHosts>,
+    event_tx: mpsc::Sender<SessionEvent>,
+) -> AppResult<SessionHandle> {
+    use crate::protocols::sftp::SftpEngine;
+    use russh_sftp::client::SftpSession;
+
+    let info = SessionInfo {
+        id: params.session_id,
+        connection_id: params.connection_id,
+        kind: SessionKind::Sftp,
+        state: SessionState::Connecting,
+    };
+    let _ = event_tx
+        .send(SessionEvent::State {
+            session_id: info.id,
+            state: SessionState::Connecting,
+            message: None,
+        })
+        .await;
+
+    let session = establish(&params.host, params.port, &params.user, auth, known_hosts).await?;
+
+    let channel = session
+        .channel_open_session()
+        .await
+        .map_err(|e| AppError::Protocol(format!("open sftp channel: {e}")))?;
+    channel
+        .request_subsystem(true, "sftp")
+        .await
+        .map_err(|e| AppError::Protocol(format!("request sftp subsystem: {e}")))?;
+    let stream = channel.into_stream();
+    let sftp = SftpSession::new(stream)
+        .await
+        .map_err(|e| AppError::Protocol(format!("sftp init: {e}")))?;
+    let engine = SftpEngine::new(sftp);
+
+    let handle = SessionHandle::new_sftp(
+        SessionInfo {
+            state: SessionState::Connected,
+            ..info
+        },
+        engine,
+    );
+    let _ = event_tx
+        .send(SessionEvent::State {
+            session_id: info.id,
+            state: SessionState::Connected,
+            message: None,
+        })
+        .await;
+
     Ok(handle)
 }
 

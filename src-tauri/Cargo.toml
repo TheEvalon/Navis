@@ -50,6 +50,7 @@ directories = { workspace = true }
 # Phase 3+ (kept here so the lib compiles with the modules referenced)
 russh = { workspace = true }
 russh-keys = { workspace = true }
+russh-sftp = { workspace = true }
 
 [features]
 default = []

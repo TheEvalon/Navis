@@ -48,5 +48,13 @@ pub fn handler() -> Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + 
         commands::hostkeys::rdp_pinned_hosts,
         commands::hostkeys::rdp_pin_host,
         commands::hostkeys::rdp_forget_host,
+        commands::sftp::sftp_list,
+        commands::sftp::sftp_canonicalize,
+        commands::sftp::sftp_mkdir,
+        commands::sftp::sftp_remove,
+        commands::sftp::sftp_rename,
+        commands::sftp::sftp_download,
+        commands::sftp::sftp_upload,
+        commands::sftp::sftp_validate_relative_path,
     ])
 }
